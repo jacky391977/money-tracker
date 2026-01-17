@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <base target="_top">
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  
+  <style>
+    /* 設定深色背景 */
+    body { background-color: #121212; color: #e0e0e0; font-family: sans-serif; }
+    /* 卡片樣式 */
+    .card { background-color: #1e1e1e; border: none; border-radius: 15px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); margin-bottom: 15px; }
+    .card-title { color: #aaaaaa; font-size: 0.9rem; }
+    /* 金額顏色 */
+    .amount-expense { color: #ff6b6b; font-weight: bold; }
+    .amount-income { color: #4ecdc4; font-weight: bold; }
+    /* 列表項目 */
+    .list-group-item { background-color: #1e1e1e; border-color: #333; color: #fff; display: flex; justify-content: space-between; align-items: center; padding: 15px; }
+    .date-badge { font-size: 0.75rem; color: #888; display: block; }
+    .item-name { font-size: 1.1rem; font-weight: 500; }
+    /* 讀取動畫 */
+    #loading { text-align: center; padding: 50px; color: #888; }
+  </style>
+</head>
+<body>
+
+<div class="container py-4" style="max-width: 600px;">
+  
+  <h4 class="mb-4 fw-bold text-center">💰 我的 AI 記帳本</h4>
+
+  <div class="row g-3 mb-4">
+    <div class="col-6">
+      <div class="card p-3 text-center">
+        <div class="card-title">本月支出</div>
+        <h3 class="amount-expense" id="totalExpense">$0</h3>
+      </div>
+    </div>
+    <div class="col-6">
+      <div class="card p-3 text-center">
+        <div class="card-title">本月收入</div>
+        <h3 class="amount-income" id="totalIncome">$0</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="card p-3 mb-4">
+    <h6 class="text-center mb-3 text-muted">支出分類佔比</h6>
+    <div style="height: 250px; display: flex; justify-content: center;">
+      <canvas id="expenseChart"></canvas>
+    </div>
+  </div>
+
+  <h5 class="mb-3 ps-2 border-start border-4 border-primary">最近交易紀錄</h5>
+  
+  <div id="loading">
+    <div class="spinner-border text-primary" role="status"></div>
+    <div class="mt-2">正在讀取資料...</div>
+  </div>
+
+  <div class="list-group" id="transactionList"></div>
+
+</div>
+
+<script>
+  // 當網頁載入完成時，呼叫後端抓資料
+  window.onload = function() {
+    google.script.run
+      .withSuccessHandler(renderPage) // 成功抓到資料後，執行 renderPage
+      .withFailureHandler(onFail)     // 失敗時，執行 onFail
+      .getDataFromSheet();
+  };
+
+  function onFail(error) {
+    document.getElementById('loading').innerHTML = '<p class="text-danger">❌ 讀取失敗，請檢查後端程式碼。</p>';
+    console.error(error);
+  }
+
+  // 把抓到的資料畫在畫面上
+  function renderPage(data) {
+    // 1. 隱藏讀取動畫
+    document.getElementById('loading').style.display = 'none';
+    
+    const list = document.getElementById('transactionList');
+    let totalExp = 0;
+    let totalInc = 0;
+    const categoryMap = {};
+
+    // 2. 迴圈處理每一筆資料
+    // 資料結構: [日期(0), 類型(1), 項目(2), 金額(3), 分類(4)]
+    data.forEach(row => {
+      // 防止空行報錯
+      if (!row[0]) return;
+
+      const type = row[1];
+      // 把金額 "$1,000" 這種文字轉成數字
+      const amount = parseInt(String(row[3]).replace(/[^0-9.-]+/g,"")) || 0;
+      const category = row[4];
+      const date = row[0];
+      const item = row[2];
+
+      // 計算總額 & 分類統計
+      if (type === '支出') {
+        totalExp += amount;
+        if (category) {
+          categoryMap[category] = (categoryMap[category] || 0) + amount;
+        }
+      } else if (type === '收入') {
+        totalInc += amount;
+      }
+
+      // 產生列表的 HTML
+      const itemHTML = `
+        <div class="list-group-item">
+          <div>
+            <span class="date-badge">${date}</span>
+            <span class="item-name">${item}</span>
+            <span class="badge bg-secondary ms-2" style="font-weight:normal; opacity:0.7">${category}</span>
+          </div>
+          <div class="${type === '支出' ? 'amount-expense' : 'amount-income'}">
+            ${type === '支出' ? '-' : '+'} $${amount.toLocaleString()}
+          </div>
+        </div>
+      `;
+      list.innerHTML += itemHTML;
+    });
+
+    // 3. 更新上方總數字
+    document.getElementById('totalExpense').innerText = '$' + totalExp.toLocaleString();
+    document.getElementById('totalIncome').innerText = '$' + totalInc.toLocaleString();
+
+    // 4. 畫圓餅圖
+    drawChart(categoryMap);
+  }
+
+  // 畫圖表的函式
+  function drawChart(dataMap) {
+    const ctx = document.getElementById('expenseChart').getContext('2d');
+    
+    // 如果沒有支出資料，顯示提示
+    if (Object.keys(dataMap).length === 0) {
+       return;
+    }
+
+    new Chart(ctx, {
+      type: 'doughnut', // 甜甜圈圖
+      data: {
+        labels: Object.keys(dataMap),
+        datasets: [{
+          data: Object.values(dataMap),
+          backgroundColor: [
+            '#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40'
+          ],
+          borderWidth: 0
+        }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+          legend: { position: 'bottom', labels: { color: '#aaa', padding: 20 } }
+        }
+      }
+    });
+  }
+</script>
+
+</body>
+</html>
